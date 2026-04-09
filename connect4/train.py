@@ -17,7 +17,7 @@ from .minimax import minimax_move
 from .network import Connect4Net
 from .inference_server import InferenceServer, worker_play_games
 
-EVAL_GAMES = 20
+EVAL_GAMES = 40
 MINIMAX_DEPTH = 5
 
 # ── Hyperparameters ──────────────────────────────────────────────
@@ -26,9 +26,9 @@ NUM_ITERATIONS = 50
 GAMES_PER_ITERATION = 200
 NUM_SIMULATIONS = 200
 REPLAY_BUFFER_SIZE = 150_000
-BATCH_SIZE = 512
-EPOCHS_PER_ITERATION = 15
-LEARNING_RATE = 1e-3
+BATCH_SIZE = 256
+EPOCHS_PER_ITERATION = 30
+LEARNING_RATE = 5e-4
 WEIGHT_DECAY = 1e-4
 TEMPERATURE_THRESHOLD = 15
 C_PUCT = 1.5
