@@ -13,10 +13,12 @@ from tqdm import tqdm
 
 from .game import COLS, Connect4
 from .mcts import MCTS
+from .minimax import minimax_move
 from .network import Connect4Net
 from .inference_server import InferenceServer, worker_play_games
 
 EVAL_GAMES = 20
+MINIMAX_DEPTH = 5
 
 # ── Hyperparameters ──────────────────────────────────────────────
 
@@ -74,8 +76,9 @@ def train_network(
     return total_policy_loss / num_batches, total_value_loss / num_batches
 
 
-def evaluate_vs_random(network: Connect4Net, device: torch.device, num_games: int = EVAL_GAMES) -> tuple[int, int, int]:
-    mcts = MCTS(network, num_simulations=50, c_puct=C_PUCT, device=device)
+def evaluate_vs_minimax(network: Connect4Net, device: torch.device, num_games: int = EVAL_GAMES) -> tuple[int, int, int]:
+    """Evaluate AI (200 sims) vs minimax (depth 5). Returns (wins, draws, losses)."""
+    mcts = MCTS(network, num_simulations=200, c_puct=C_PUCT, device=device)
     wins = draws = losses = 0
     for g in range(num_games):
         game = Connect4()
@@ -85,7 +88,7 @@ def evaluate_vs_random(network: Connect4Net, device: torch.device, num_games: in
                 policy = mcts.search(game, temperature=0)
                 action = int(np.argmax(policy))
             else:
-                action = np.random.choice(game.legal_moves())
+                action = minimax_move(game, depth=MINIMAX_DEPTH)
             game.play(action)
         winner = game.winner()
         if winner == ai_player:
@@ -218,9 +221,9 @@ def main() -> None:
             print(f"Policy loss: {p_loss:.4f}  Value loss: {v_loss:.4f}")
 
         # ── Evaluate vs random ────────────────────────────────────
-        w, d, l = evaluate_vs_random(network, device)
+        w, d, l = evaluate_vs_minimax(network, device)
         winrate = (w + 0.5 * d) / (w + d + l) * 100
-        print(f"Eval vs random ({w+d+l}g): {w}W {d}D {l}L  ({winrate:.0f}%)")
+        print(f"Eval vs minimax d{MINIMAX_DEPTH} ({w+d+l}g): {w}W {d}D {l}L  ({winrate:.0f}%)")
 
         # ── Checkpoint ───────────────────────────────────────────
         ckpt_path = CHECKPOINT_DIR / f"model_iter_{iteration:03d}.pt"
