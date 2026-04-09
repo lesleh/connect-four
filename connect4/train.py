@@ -28,7 +28,8 @@ NUM_SIMULATIONS = 200
 REPLAY_BUFFER_SIZE = 150_000
 BATCH_SIZE = 256
 EPOCHS_PER_ITERATION = 30
-LEARNING_RATE = 5e-4
+LEARNING_RATE = 1e-3
+LR_DECAY = 0.97  # multiply LR by this each iteration
 WEIGHT_DECAY = 1e-4
 TEMPERATURE_THRESHOLD = 15
 C_PUCT = 1.5
@@ -124,6 +125,7 @@ def main() -> None:
 
     network = Connect4Net(num_res_blocks=NUM_RES_BLOCKS, channels=NUM_CHANNELS).to(device)
     optimizer = Adam(network.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=LR_DECAY)
     replay_buffer: deque = deque(maxlen=REPLAY_BUFFER_SIZE)
 
     # Auto-resume
@@ -218,7 +220,9 @@ def main() -> None:
         # ── Training (GPU) ───────────────────────────────────────
         if len(replay_buffer) >= BATCH_SIZE:
             p_loss, v_loss = train_network(network, optimizer, replay_buffer, device)
-            print(f"Policy loss: {p_loss:.4f}  Value loss: {v_loss:.4f}")
+            scheduler.step()
+            lr_now = optimizer.param_groups[0]["lr"]
+            print(f"Policy loss: {p_loss:.4f}  Value loss: {v_loss:.4f}  LR: {lr_now:.6f}")
 
         # ── Evaluate vs random ────────────────────────────────────
         w, d, l = evaluate_vs_minimax(network, device)
