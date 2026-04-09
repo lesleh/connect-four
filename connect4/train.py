@@ -1,4 +1,4 @@
-"""AlphaZero self-play training loop with multiprocessing."""
+"""AlphaZero self-play training loop with multiprocessing + GPU inference server."""
 
 import os
 from collections import deque
@@ -14,6 +14,7 @@ from tqdm import tqdm
 from .game import COLS, Connect4
 from .mcts import MCTS
 from .network import Connect4Net
+from .inference_server import InferenceServer, worker_play_games
 
 EVAL_GAMES = 20
 
@@ -21,7 +22,7 @@ EVAL_GAMES = 20
 
 NUM_ITERATIONS = 50
 GAMES_PER_ITERATION = 200
-NUM_SIMULATIONS = 200       # MCTS simulations per move
+NUM_SIMULATIONS = 200
 REPLAY_BUFFER_SIZE = 150_000
 BATCH_SIZE = 512
 EPOCHS_PER_ITERATION = 15
@@ -31,56 +32,8 @@ TEMPERATURE_THRESHOLD = 15
 C_PUCT = 1.5
 NUM_RES_BLOCKS = 5
 NUM_CHANNELS = 128
-NUM_WORKERS = max(1, os.cpu_count() - 2)  # leave 2 cores for system/main
+NUM_WORKERS = max(1, os.cpu_count() - 2)
 CHECKPOINT_DIR = Path("checkpoints")
-
-
-# ── Worker process ───────────────────────────────────────────────
-
-def _worker_play_games(
-    worker_id: int,
-    num_games: int,
-    state_dict: dict,
-    result_queue: mp.Queue,
-) -> None:
-    """Worker process: plays games on CPU with its own network copy."""
-    network = Connect4Net(num_res_blocks=NUM_RES_BLOCKS, channels=NUM_CHANNELS)
-    network.load_state_dict(state_dict)
-    network.eval()
-
-    mcts = MCTS(network, num_simulations=NUM_SIMULATIONS, c_puct=C_PUCT,
-                device=torch.device("cpu"))
-
-    for _ in range(num_games):
-        game = Connect4()
-        history = []
-        move_num = 0
-
-        while not game.is_terminal():
-            temp = 1.0 if move_num < TEMPERATURE_THRESHOLD else 0.0
-            policy = mcts.search(game, temperature=temp)
-            history.append((game.encode(), policy, game.current_player))
-
-            if temp > 0:
-                action = int(np.random.choice(COLS, p=policy))
-            else:
-                action = int(np.argmax(policy))
-
-            game.play(action)
-            move_num += 1
-
-        winner = game.winner()
-        training_data = []
-        for state, policy, player in history:
-            if winner is None:
-                outcome = 0
-            elif winner == player:
-                outcome = 1
-            else:
-                outcome = -1
-            training_data.append((state, policy, outcome))
-
-        result_queue.put((training_data, winner))
 
 
 # ── Training ─────────────────────────────────────────────────────
@@ -122,7 +75,6 @@ def train_network(
 
 
 def evaluate_vs_random(network: Connect4Net, device: torch.device, num_games: int = EVAL_GAMES) -> tuple[int, int, int]:
-    """Quick eval: AI (greedy, 50 sims) vs random. Returns (wins, draws, losses)."""
     mcts = MCTS(network, num_simulations=50, c_puct=C_PUCT, device=device)
     wins = draws = losses = 0
     for g in range(num_games):
@@ -162,8 +114,8 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.backends.mps.is_available():
         device = torch.device("mps")
-    print(f"Using device: {device} (training)")
-    print(f"Self-play workers: {NUM_WORKERS} (CPU)")
+    print(f"Using device: {device} (training + inference server)")
+    print(f"Self-play workers: {NUM_WORKERS} (CPU tree search → GPU eval)")
 
     CHECKPOINT_DIR.mkdir(exist_ok=True)
 
@@ -194,11 +146,15 @@ def main() -> None:
         print(f"Iteration {iteration}")
         print(f"{'='*60}")
 
-        # ── Self-play (multiprocessing) ──────────────────────────
-        # Copy weights to CPU for workers
-        cpu_state_dict = {k: v.cpu() for k, v in network.state_dict().items()}
+        # ── Start inference server ───────────────────────────────
+        server = InferenceServer(
+            network, device, NUM_WORKERS,
+            batch_wait=0.003, max_batch=NUM_WORKERS * 8,
+            use_fp16=True,
+        )
+        server.start()
 
-        # Distribute games across workers
+        # ── Self-play (multiprocessing + GPU server) ─────────────
         games_per_worker = [GAMES_PER_ITERATION // NUM_WORKERS] * NUM_WORKERS
         for i in range(GAMES_PER_ITERATION % NUM_WORKERS):
             games_per_worker[i] += 1
@@ -209,13 +165,22 @@ def main() -> None:
             if games_per_worker[w_id] == 0:
                 continue
             p = mp.Process(
-                target=_worker_play_games,
-                args=(w_id, games_per_worker[w_id], cpu_state_dict, result_queue),
+                target=worker_play_games,
+                args=(
+                    w_id,
+                    games_per_worker[w_id],
+                    server.request_queue,
+                    server.response_queues[w_id],
+                    result_queue,
+                    NUM_SIMULATIONS,
+                    C_PUCT,
+                    TEMPERATURE_THRESHOLD,
+                ),
             )
             p.start()
             workers.append(p)
 
-        # Collect results with progress bar
+        # Collect results
         total_games = GAMES_PER_ITERATION
         new_examples = 0
         wins = {1: 0, -1: 0, 0: 0}
@@ -238,9 +203,14 @@ def main() -> None:
         for p in workers:
             p.join()
 
+        # Stop inference server
+        server.stop()
         print(f"Generated {new_examples} examples from {total_games} games "
               f"(X:{wins[1]} O:{wins[-1]} D:{wins[0]})  "
               f"Buffer: {len(replay_buffer)}")
+        print(f"GPU server: {server.batches_processed} batches, "
+              f"{server.total_inferences} inferences "
+              f"(avg batch size: {server.total_inferences / max(1, server.batches_processed):.1f})")
 
         # ── Training (GPU) ───────────────────────────────────────
         if len(replay_buffer) >= BATCH_SIZE:
