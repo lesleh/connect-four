@@ -1,0 +1,15 @@
+[project]
+name = "connect-four-alphazero"
+version = "0.1.0"
+description = "AlphaZero-style Connect 4 AI"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.24",
+    "tqdm>=4.65",
+]
+
+[project.scripts]
+train = "connect4.train:main"
+play = "connect4.play:main"
+watch = "connect4.watch:main"
