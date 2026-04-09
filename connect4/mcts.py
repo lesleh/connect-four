@@ -45,7 +45,7 @@ class MCTSNode:
         best_score = -float("inf")
         best_child = self.children[0]
         for child in self.children:
-            q = child.q_value
+            q = -child.q_value  # negate: child stores value for child's player, but parent wants opponent's loss
             u = c_puct * child.prior * sqrt_total / (1 + child.visit_count)
             score = q + u
             if score > best_score:
