@@ -1,5 +1,6 @@
 """AlphaZero self-play training loop with multiprocessing + GPU inference server."""
 
+import json
 import os
 from collections import deque
 from pathlib import Path
@@ -22,9 +23,9 @@ EVAL_DEPTHS = [3, 4, 5]
 
 # ── Hyperparameters ──────────────────────────────────────────────
 
-NUM_ITERATIONS = 50
+NUM_ITERATIONS = 150
 GAMES_PER_ITERATION = 200
-NUM_SIMULATIONS = 200
+NUM_SIMULATIONS = 400
 REPLAY_BUFFER_SIZE = 150_000
 BATCH_SIZE = 256
 EPOCHS_PER_ITERATION = 30
@@ -77,13 +78,15 @@ def train_network(
     return total_policy_loss / num_batches, total_value_loss / num_batches
 
 
-def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, num_games: int = EVAL_GAMES) -> tuple[int, int, int]:
-    """Evaluate AI (200 sims) vs minimax at given depth. Returns (wins, draws, losses)."""
+def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, num_games: int = EVAL_GAMES) -> dict:
+    """Evaluate AI (200 sims) vs minimax at given depth. Returns results split by P1/P2."""
     mcts = MCTS(network, num_simulations=200, c_puct=C_PUCT, device=device)
-    wins = draws = losses = 0
+    p1 = {"wins": 0, "draws": 0, "losses": 0}  # AI goes first
+    p2 = {"wins": 0, "draws": 0, "losses": 0}  # AI goes second
     for g in range(num_games):
         game = Connect4()
         ai_player = 1 if g % 2 == 0 else -1
+        bucket = p1 if ai_player == 1 else p2
         while not game.is_terminal():
             if game.current_player == ai_player:
                 policy = mcts.search(game, temperature=0)
@@ -93,12 +96,12 @@ def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, 
             game.play(action)
         winner = game.winner()
         if winner == ai_player:
-            wins += 1
+            bucket["wins"] += 1
         elif winner is None:
-            draws += 1
+            bucket["draws"] += 1
         else:
-            losses += 1
-    return wins, draws, losses
+            bucket["losses"] += 1
+    return {"p1": p1, "p2": p2}
 
 
 def save_checkpoint(network, optimizer, iteration, buffer_size, path):
@@ -225,10 +228,32 @@ def main() -> None:
             print(f"Policy loss: {p_loss:.4f}  Value loss: {v_loss:.4f}  LR: {lr_now:.6f}")
 
         # ── Evaluate vs minimax at multiple depths ─────────────────
+        eval_results = {}
         for depth in EVAL_DEPTHS:
-            w, d, l = evaluate_vs_minimax(network, device, depth)
-            winrate = (w + 0.5 * d) / (w + d + l) * 100
-            print(f"Eval vs minimax d{depth} ({w+d+l}g): {w}W {d}D {l}L  ({winrate:.0f}%)")
+            result = evaluate_vs_minimax(network, device, depth)
+            p1, p2 = result["p1"], result["p2"]
+            total_w = p1["wins"] + p2["wins"]
+            total_d = p1["draws"] + p2["draws"]
+            total_l = p1["losses"] + p2["losses"]
+            total = total_w + total_d + total_l
+            winrate = (total_w + 0.5 * total_d) / total * 100
+            eval_results[depth] = {**result, "winrate": winrate}
+            print(f"Eval d{depth}: P1 {p1['wins']}W {p1['draws']}D {p1['losses']}L | "
+                  f"P2 {p2['wins']}W {p2['draws']}D {p2['losses']}L | "
+                  f"Total ({winrate:.0f}%)")
+
+        # ── Log iteration stats ──────────────────────────────────
+        log_entry = {
+            "iteration": iteration,
+            "policy_loss": round(p_loss, 4) if len(replay_buffer) >= BATCH_SIZE else None,
+            "value_loss": round(v_loss, 4) if len(replay_buffer) >= BATCH_SIZE else None,
+            "lr": round(optimizer.param_groups[0]["lr"], 6),
+            "buffer_size": len(replay_buffer),
+            "eval": {str(d): r for d, r in eval_results.items()},
+        }
+        log_path = CHECKPOINT_DIR / "training_log.jsonl"
+        with open(log_path, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
 
         # ── Checkpoint ───────────────────────────────────────────
         ckpt_path = CHECKPOINT_DIR / f"model_iter_{iteration:03d}.pt"
