@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 checkpoints/
 *.pt
+*.onnx
+*.onnx.data
 .DS_Store
 *.egg-info/
 dist/
