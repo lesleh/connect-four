@@ -2,6 +2,8 @@
 
 import json
 import os
+import pickle
+import signal
 from collections import deque
 from pathlib import Path
 
@@ -115,6 +117,19 @@ def save_checkpoint(network, optimizer, iteration, buffer_size, path):
     }, path)
 
 
+def save_buffer(replay_buffer: deque, path: Path) -> None:
+    with open(path, "wb") as f:
+        pickle.dump(list(replay_buffer), f)
+
+
+def load_buffer(path: Path, maxlen: int) -> deque:
+    with open(path, "rb") as f:
+        data = pickle.load(f)
+    buf = deque(data, maxlen=maxlen)
+    print(f"Loaded replay buffer: {len(buf)} examples")
+    return buf
+
+
 def main() -> None:
     mp.set_start_method("spawn", force=True)
 
@@ -130,6 +145,9 @@ def main() -> None:
     optimizer = Adam(network.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=LR_DECAY)
     replay_buffer: deque = deque(maxlen=REPLAY_BUFFER_SIZE)
+    buffer_path = CHECKPOINT_DIR / "replay_buffer.pkl"
+    if buffer_path.exists():
+        replay_buffer = load_buffer(buffer_path, REPLAY_BUFFER_SIZE)
 
     # Auto-resume
     start_iteration = 0
@@ -148,6 +166,15 @@ def main() -> None:
                 print(f"Resuming from iteration {start_iteration}")
             except RuntimeError:
                 print("Checkpoint incompatible, starting fresh.")
+
+    # Save buffer on ctrl+c
+    def handle_interrupt(signum, frame):
+        print("\n\nInterrupted! Saving replay buffer...")
+        save_buffer(replay_buffer, buffer_path)
+        print(f"Buffer saved ({len(replay_buffer)} examples). Exiting.")
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGINT, handle_interrupt)
 
     for iteration in range(start_iteration + 1, start_iteration + NUM_ITERATIONS + 1):
         print(f"\n{'='*60}")
@@ -259,6 +286,7 @@ def main() -> None:
         ckpt_path = CHECKPOINT_DIR / f"model_iter_{iteration:03d}.pt"
         save_checkpoint(network, optimizer, iteration, len(replay_buffer), ckpt_path)
         save_checkpoint(network, optimizer, iteration, len(replay_buffer), CHECKPOINT_DIR / "latest.pt")
+        save_buffer(replay_buffer, buffer_path)
         print(f"Saved checkpoint: {ckpt_path}")
 
     print("\nTraining complete!")
