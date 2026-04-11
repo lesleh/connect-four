@@ -146,14 +146,14 @@ def play_vs_minimax(network: Connect4Net, device: torch.device, num_games: int, 
     return training_data
 
 
-def save_checkpoint(network, optimizer, iteration, buffer_size, config, path):
+def save_checkpoint(network, optimizer, iteration, buffer_size, config, num_res_blocks, num_channels, path):
     torch.save({
         "iteration": iteration,
         "model_state_dict": network.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "buffer_size": buffer_size,
-        "num_res_blocks": NUM_RES_BLOCKS,
-        "channels": NUM_CHANNELS,
+        "num_res_blocks": num_res_blocks,
+        "channels": num_channels,
         "rows": config.rows,
         "cols": config.cols,
         "win_length": config.win_length,
@@ -178,8 +178,12 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=6, help="Board rows (default: 6)")
     parser.add_argument("--cols", type=int, default=7, help="Board columns (default: 7)")
     parser.add_argument("--win", type=int, default=4, help="Win length (default: 4)")
+    parser.add_argument("--blocks", type=int, default=NUM_RES_BLOCKS, help=f"ResNet blocks (default: {NUM_RES_BLOCKS})")
+    parser.add_argument("--channels", type=int, default=NUM_CHANNELS, help=f"ResNet channels (default: {NUM_CHANNELS})")
     args = parser.parse_args()
 
+    num_res_blocks = args.blocks
+    num_channels = args.channels
     config = GameConfig(rows=args.rows, cols=args.cols, win_length=args.win)
     checkpoint_dir = Path(f"checkpoints/{config.win_length}_{config.rows}x{config.cols}")
 
@@ -194,7 +198,8 @@ def main() -> None:
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    network = Connect4Net(rows=config.rows, cols=config.cols, num_res_blocks=NUM_RES_BLOCKS, channels=NUM_CHANNELS).to(device)
+    print(f"Network: {num_res_blocks} res blocks, {num_channels} channels")
+    network = Connect4Net(rows=config.rows, cols=config.cols, num_res_blocks=num_res_blocks, channels=num_channels).to(device)
     optimizer = Adam(network.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=LR_DECAY)
     replay_buffer: deque = deque(maxlen=REPLAY_BUFFER_SIZE)
@@ -209,8 +214,8 @@ def main() -> None:
         ckpt = torch.load(latest, map_location=device, weights_only=True)
         ckpt_blocks = ckpt.get("num_res_blocks", None)
         ckpt_channels = ckpt.get("channels", None)
-        if (ckpt_blocks is not None and ckpt_blocks != NUM_RES_BLOCKS) or \
-           (ckpt_channels is not None and ckpt_channels != NUM_CHANNELS):
+        if (ckpt_blocks is not None and ckpt_blocks != num_res_blocks) or \
+           (ckpt_channels is not None and ckpt_channels != num_channels):
             print("Checkpoint architecture mismatch, starting fresh.")
         else:
             try:
@@ -345,8 +350,8 @@ def main() -> None:
 
         # -- Checkpoint --
         ckpt_path = checkpoint_dir / f"model_iter_{iteration:03d}.pt"
-        save_checkpoint(network, optimizer, iteration, len(replay_buffer), config, ckpt_path)
-        save_checkpoint(network, optimizer, iteration, len(replay_buffer), config, checkpoint_dir / "latest.pt")
+        save_checkpoint(network, optimizer, iteration, len(replay_buffer), config, num_res_blocks, num_channels, ckpt_path)
+        save_checkpoint(network, optimizer, iteration, len(replay_buffer), config, num_res_blocks, num_channels, checkpoint_dir / "latest.pt")
         save_buffer(replay_buffer, buffer_path)
         print(f"Saved checkpoint: {ckpt_path}")
 
