@@ -22,7 +22,7 @@ from .network import Connect4Net
 from .inference_server import InferenceServer, worker_play_games
 
 EVAL_GAMES = 20
-EVAL_DEPTHS = [6, 7]
+EVAL_DEPTHS = [3, 4, 5]
 
 # -- Hyperparameters --
 

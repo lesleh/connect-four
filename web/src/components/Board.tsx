@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ROWS, COLS } from "../game/connect4";
+import type { GameConfig } from "../game/connect4";
 import "./Board.css";
 
 interface BoardProps {
   board: Int8Array;
+  config: GameConfig;
   winningCells: [number, number][] | null;
   lastMove: number | null;
   disabled: boolean;
@@ -16,18 +17,18 @@ interface DroppingPiece {
   key: number;
 }
 
-export function Board({ board, winningCells, lastMove, disabled, onColumnClick }: BoardProps) {
+export function Board({ board, config, winningCells, lastMove, disabled, onColumnClick }: BoardProps) {
+  const { rows, cols } = config;
   const winSet = new Set(winningCells?.map(([r, c]) => `${r},${c}`) ?? []);
   const [dropping, setDropping] = useState<DroppingPiece | null>(null);
-  const prevBoardRef = useRef<Int8Array>(new Int8Array(ROWS * COLS));
+  const prevBoardRef = useRef<Int8Array>(new Int8Array(rows * cols));
   const dropKeyRef = useRef(0);
 
   useEffect(() => {
     const prev = prevBoardRef.current;
-    // Find the newly placed piece
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const idx = r * COLS + c;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
         if (board[idx] !== 0 && prev[idx] === 0) {
           dropKeyRef.current++;
           setDropping({ row: r, col: c, key: dropKeyRef.current });
@@ -38,17 +39,20 @@ export function Board({ board, winningCells, lastMove, disabled, onColumnClick }
       }
     }
     prevBoardRef.current = new Int8Array(board);
-  }, [board]);
+  }, [board, rows, cols]);
 
   return (
     <div className="board">
-      <div className="grid">
-        {Array.from({ length: ROWS }, (_, r) =>
-          Array.from({ length: COLS }, (_, c) => {
-            const val = board[r * COLS + c];
+      <div
+        className="grid"
+        style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}
+      >
+        {Array.from({ length: rows }, (_, r) =>
+          Array.from({ length: cols }, (_, c) => {
+            const val = board[r * cols + c];
             const isWinning = winSet.has(`${r},${c}`);
             const isLastMove = lastMove === c && val !== 0 &&
-              (r === ROWS - 1 || board[(r + 1) * COLS + c] !== 0);
+              (r === rows - 1 || board[(r + 1) * cols + c] !== 0);
             const canClick = !disabled && board[c] === 0;
             const isDropping = dropping && dropping.row === r && dropping.col === c;
             const dropDistance = isDropping ? r + 1 : 0;

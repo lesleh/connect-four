@@ -1,19 +1,30 @@
 import * as ort from "onnxruntime-web";
+import type { GameConfig } from "../game/connect4";
 
 let session: ort.InferenceSession | null = null;
+let currentModel: string | null = null;
 
-export async function loadModel(): Promise<void> {
-  session = await ort.InferenceSession.create("/model.onnx", {
+function modelPath(config: GameConfig): string {
+  return `/models/${config.winLength}_${config.rows}x${config.cols}.onnx`;
+}
+
+export async function loadModel(config: GameConfig): Promise<void> {
+  const path = modelPath(config);
+  if (currentModel === path && session) return;
+
+  session = await ort.InferenceSession.create(path, {
     executionProviders: ["webgpu", "wasm"],
   });
+  currentModel = path;
 }
 
 export async function predict(
-  encoded: Float32Array
+  encoded: Float32Array,
+  config: GameConfig
 ): Promise<{ policy: Float32Array; value: number }> {
   if (!session) throw new Error("Model not loaded");
 
-  const input = new ort.Tensor("float32", encoded, [1, 2, 6, 7]);
+  const input = new ort.Tensor("float32", encoded, [1, 2, config.rows, config.cols]);
   const results = await session.run({ board: input });
 
   const logits = results.policy_logits.data as Float32Array;

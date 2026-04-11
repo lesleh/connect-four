@@ -1,27 +1,37 @@
-export const ROWS = 6;
-export const COLS = 7;
+export interface GameConfig {
+  rows: number;
+  cols: number;
+  winLength: number;
+}
+
+export const PRESETS: Record<string, GameConfig> = {
+  "Connect 3 (3x4)": { rows: 3, cols: 4, winLength: 3 },
+  "Connect 4 (6x7)": { rows: 6, cols: 7, winLength: 4 },
+};
 
 export class Connect4 {
+  config: GameConfig;
   board: Int8Array;
   currentPlayer: 1 | -1;
   lastMove: number | null;
 
-  constructor() {
-    this.board = new Int8Array(ROWS * COLS);
+  constructor(config: GameConfig = PRESETS["Connect 4 (6x7)"]) {
+    this.config = config;
+    this.board = new Int8Array(config.rows * config.cols);
     this.currentPlayer = 1;
     this.lastMove = null;
   }
 
-  private get(row: number, col: number): number {
-    return this.board[row * COLS + col];
+  get(row: number, col: number): number {
+    return this.board[row * this.config.cols + col];
   }
 
   private set(row: number, col: number, value: number): void {
-    this.board[row * COLS + col] = value;
+    this.board[row * this.config.cols + col] = value;
   }
 
   copy(): Connect4 {
-    const g = new Connect4();
+    const g = new Connect4(this.config);
     g.board = new Int8Array(this.board);
     g.currentPlayer = this.currentPlayer;
     g.lastMove = this.lastMove;
@@ -30,14 +40,14 @@ export class Connect4 {
 
   legalMoves(): number[] {
     const moves: number[] = [];
-    for (let c = 0; c < COLS; c++) {
+    for (let c = 0; c < this.config.cols; c++) {
       if (this.get(0, c) === 0) moves.push(c);
     }
     return moves;
   }
 
   play(col: number): void {
-    for (let row = ROWS - 1; row >= 0; row--) {
+    for (let row = this.config.rows - 1; row >= 0; row--) {
       if (this.get(row, col) === 0) {
         this.set(row, col, this.currentPlayer);
         this.lastMove = col;
@@ -53,69 +63,82 @@ export class Connect4 {
   }
 
   winner(): number | null {
+    const { rows, cols, winLength: wl } = this.config;
     // Horizontal
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS - 3; c++) {
-        const s = this.get(r, c) + this.get(r, c + 1) + this.get(r, c + 2) + this.get(r, c + 3);
-        if (s === 4) return 1;
-        if (s === -4) return -1;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c <= cols - wl; c++) {
+        let s = 0;
+        for (let i = 0; i < wl; i++) s += this.get(r, c + i);
+        if (s === wl) return 1;
+        if (s === -wl) return -1;
       }
     }
     // Vertical
-    for (let r = 0; r < ROWS - 3; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const s = this.get(r, c) + this.get(r + 1, c) + this.get(r + 2, c) + this.get(r + 3, c);
-        if (s === 4) return 1;
-        if (s === -4) return -1;
+    for (let r = 0; r <= rows - wl; r++) {
+      for (let c = 0; c < cols; c++) {
+        let s = 0;
+        for (let i = 0; i < wl; i++) s += this.get(r + i, c);
+        if (s === wl) return 1;
+        if (s === -wl) return -1;
       }
     }
     // Diagonal down-right
-    for (let r = 0; r < ROWS - 3; r++) {
-      for (let c = 0; c < COLS - 3; c++) {
-        const s = this.get(r, c) + this.get(r + 1, c + 1) + this.get(r + 2, c + 2) + this.get(r + 3, c + 3);
-        if (s === 4) return 1;
-        if (s === -4) return -1;
+    for (let r = 0; r <= rows - wl; r++) {
+      for (let c = 0; c <= cols - wl; c++) {
+        let s = 0;
+        for (let i = 0; i < wl; i++) s += this.get(r + i, c + i);
+        if (s === wl) return 1;
+        if (s === -wl) return -1;
       }
     }
     // Diagonal down-left
-    for (let r = 0; r < ROWS - 3; r++) {
-      for (let c = 3; c < COLS; c++) {
-        const s = this.get(r, c) + this.get(r + 1, c - 1) + this.get(r + 2, c - 2) + this.get(r + 3, c - 3);
-        if (s === 4) return 1;
-        if (s === -4) return -1;
+    for (let r = 0; r <= rows - wl; r++) {
+      for (let c = wl - 1; c < cols; c++) {
+        let s = 0;
+        for (let i = 0; i < wl; i++) s += this.get(r + i, c - i);
+        if (s === wl) return 1;
+        if (s === -wl) return -1;
       }
     }
     return null;
   }
 
   winningCells(): [number, number][] | null {
-    const check = (positions: [number, number][]): [number, number][] | null => {
-      const s = positions.reduce((sum, [r, c]) => sum + this.get(r, c), 0);
-      if (s === 4 || s === -4) return positions;
+    const { rows, cols, winLength: wl } = this.config;
+
+    const check = (getPos: (i: number) => [number, number]): [number, number][] | null => {
+      const positions: [number, number][] = [];
+      let s = 0;
+      for (let i = 0; i < wl; i++) {
+        const pos = getPos(i);
+        positions.push(pos);
+        s += this.get(pos[0], pos[1]);
+      }
+      if (s === wl || s === -wl) return positions;
       return null;
     };
 
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS - 3; c++) {
-        const result = check([[r, c], [r, c + 1], [r, c + 2], [r, c + 3]]);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c <= cols - wl; c++) {
+        const result = check((i) => [r, c + i]);
         if (result) return result;
       }
     }
-    for (let r = 0; r < ROWS - 3; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const result = check([[r, c], [r + 1, c], [r + 2, c], [r + 3, c]]);
+    for (let r = 0; r <= rows - wl; r++) {
+      for (let c = 0; c < cols; c++) {
+        const result = check((i) => [r + i, c]);
         if (result) return result;
       }
     }
-    for (let r = 0; r < ROWS - 3; r++) {
-      for (let c = 0; c < COLS - 3; c++) {
-        const result = check([[r, c], [r + 1, c + 1], [r + 2, c + 2], [r + 3, c + 3]]);
+    for (let r = 0; r <= rows - wl; r++) {
+      for (let c = 0; c <= cols - wl; c++) {
+        const result = check((i) => [r + i, c + i]);
         if (result) return result;
       }
     }
-    for (let r = 0; r < ROWS - 3; r++) {
-      for (let c = 3; c < COLS; c++) {
-        const result = check([[r, c], [r + 1, c - 1], [r + 2, c - 2], [r + 3, c - 3]]);
+    for (let r = 0; r <= rows - wl; r++) {
+      for (let c = wl - 1; c < cols; c++) {
+        const result = check((i) => [r + i, c - i]);
         if (result) return result;
       }
     }
@@ -123,13 +146,14 @@ export class Connect4 {
   }
 
   encode(): Float32Array {
-    const state = new Float32Array(2 * ROWS * COLS);
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
+    const { rows, cols } = this.config;
+    const state = new Float32Array(2 * rows * cols);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
         const val = this.get(r, c);
-        const idx = r * COLS + c;
+        const idx = r * cols + c;
         if (val === this.currentPlayer) state[idx] = 1;
-        if (val === -this.currentPlayer) state[ROWS * COLS + idx] = 1;
+        if (val === -this.currentPlayer) state[rows * cols + idx] = 1;
       }
     }
     return state;

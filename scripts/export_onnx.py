@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 
+import onnx
 import torch
 
 from connect4.game import GameConfig
@@ -16,7 +17,7 @@ def main():
     parser.add_argument("--cols", type=int, default=None)
     parser.add_argument("--win", type=int, default=None)
     parser.add_argument("-c", "--checkpoint", type=str, default=None)
-    parser.add_argument("-o", "--output", type=str, default="web/public/model.onnx")
+    parser.add_argument("-o", "--output", type=str, default=None)
     args = parser.parse_args()
 
     if args.checkpoint:
@@ -42,9 +43,10 @@ def main():
     net.load_state_dict(ckpt["model_state_dict"])
     net.eval()
 
+    win_length = ckpt.get("win_length", 4)
     dummy = torch.randn(1, 2, rows, cols)
 
-    output = Path(args.output)
+    output = Path(args.output) if args.output else Path(f"web/public/models/{win_length}_{rows}x{cols}.onnx")
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         net,
@@ -53,6 +55,14 @@ def main():
         input_names=["board"],
         output_names=["policy_logits", "value"],
     )
+
+    # Merge external data into single file (needed for browser)
+    data_file = Path(str(output) + ".data")
+    if data_file.exists():
+        model = onnx.load(str(output), load_external_data=True)
+        onnx.save(model, str(output))
+        data_file.unlink()
+
     print(f"Exported to {output} ({output.stat().st_size / 1024:.0f} KB)")
 
 

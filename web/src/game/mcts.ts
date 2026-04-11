@@ -1,4 +1,4 @@
-import { Connect4, COLS } from "./connect4";
+import { Connect4 } from "./connect4";
 import { predict } from "../ai/model";
 
 class MCTSNode {
@@ -54,8 +54,9 @@ class MCTSNode {
   }
 
   expand(policy: Float32Array): void {
+    const cols = this.game.config.cols;
     const legal = this.game.legalMoves();
-    const masked = new Float32Array(COLS);
+    const masked = new Float32Array(cols);
     let total = 0;
     for (const col of legal) {
       masked[col] = policy[col];
@@ -90,10 +91,12 @@ export async function mctsSearch(
   numSimulations: number = 80,
   cPuct: number = 1.5
 ): Promise<{ policy: Float32Array; visits: Float32Array }> {
+  const cols = game.config.cols;
+  const config = game.config;
   const root = new MCTSNode(game.copy());
 
   // Expand root
-  const { policy, value: _ } = await predict(root.game.encode());
+  const { policy, value: _ } = await predict(root.game.encode(), config);
   root.expand(policy);
 
   for (let i = 0; i < numSimulations; i++) {
@@ -118,13 +121,13 @@ export async function mctsSearch(
     }
 
     // Expand + evaluate
-    const result = await predict(node.game.encode());
+    const result = await predict(node.game.encode(), config);
     node.expand(result.policy);
     node.backpropagate(result.value);
   }
 
   // Build visit distribution
-  const visits = new Float32Array(COLS);
+  const visits = new Float32Array(cols);
   for (const child of root.children) {
     if (child.action !== null) {
       visits[child.action] = child.visitCount;
@@ -134,13 +137,13 @@ export async function mctsSearch(
   // Greedy (temperature 0)
   let bestCol = 0;
   let bestVisits = 0;
-  for (let c = 0; c < COLS; c++) {
+  for (let c = 0; c < cols; c++) {
     if (visits[c] > bestVisits) {
       bestVisits = visits[c];
       bestCol = c;
     }
   }
-  const probs = new Float32Array(COLS);
+  const probs = new Float32Array(cols);
   probs[bestCol] = 1;
 
   return { policy: probs, visits };

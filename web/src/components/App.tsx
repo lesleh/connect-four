@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Connect4, COLS } from "../game/connect4";
+import { Connect4, PRESETS } from "../game/connect4";
+import type { GameConfig } from "../game/connect4";
 import { mctsSearch } from "../game/mcts";
 import { loadModel, isLoaded, predict } from "../ai/model";
 import { Board } from "./Board";
@@ -15,10 +16,15 @@ const SIM_OPTIONS = [
   { label: "Max", value: 200 },
 ];
 
+const PRESET_NAMES = Object.keys(PRESETS);
+
 export function App() {
-  const [game, setGame] = useState(() => new Connect4());
+  const [presetName, setPresetName] = useState(PRESET_NAMES[1]); // Connect 4 default
+  const config = PRESETS[presetName];
+  const [game, setGame] = useState(() => new Connect4(config));
   const [thinking, setThinking] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [result, setResult] = useState<GameResult>(null);
   const [humanPlayer, setHumanPlayer] = useState<1 | -1>(1);
   const [numSims, setNumSims] = useState(0);
@@ -26,14 +32,22 @@ export function App() {
   const gameRef = useRef(game);
   gameRef.current = game;
 
-  useEffect(() => {
-    loadModel()
-      .then(() => setLoading(false))
-      .catch((err) => {
-        console.error("Failed to load model:", err);
-        setLoading(false);
-      });
+  const doLoadModel = useCallback(async (cfg: GameConfig) => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      await loadModel(cfg);
+      setLoading(false);
+    } catch (err) {
+      console.error("Failed to load model:", err);
+      setLoadError(`No model found for this variant. Export one first.`);
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    doLoadModel(config);
+  }, [config, doLoadModel]);
 
   const checkResult = useCallback(
     (g: Connect4): GameResult => {
@@ -48,24 +62,27 @@ export function App() {
   const aiMove = useCallback(
     async (g: Connect4) => {
       setThinking(true);
-      // Yield a frame so the UI updates before search blocks
       await new Promise((r) => setTimeout(r, 10));
 
+      const cols = g.config.cols;
       let bestCol: number;
       if (numSims === 0) {
-        // Beginner: raw network policy, no search
-        const { policy } = await predict(g.encode());
+        const { policy } = await predict(g.encode(), g.config);
         const legal = g.legalMoves();
-        // Mask illegal moves
-        const masked = new Float32Array(COLS);
+        const masked = new Float32Array(cols);
         for (const c of legal) masked[c] = policy[c];
         setVisits(masked);
-        bestCol = legal[0];
-        let bestProb = 0;
-        for (const c of legal) {
-          if (masked[c] > bestProb) {
-            bestProb = masked[c];
-            bestCol = c;
+        // 40% chance of random move for beatable play
+        if (Math.random() < 0.4) {
+          bestCol = legal[Math.floor(Math.random() * legal.length)];
+        } else {
+          bestCol = legal[0];
+          let bestProb = 0;
+          for (const c of legal) {
+            if (masked[c] > bestProb) {
+              bestProb = masked[c];
+              bestCol = c;
+            }
           }
         }
       } else {
@@ -73,7 +90,7 @@ export function App() {
         setVisits(v);
         bestCol = 0;
         let bestVisits = 0;
-        for (let c = 0; c < COLS; c++) {
+        for (let c = 0; c < cols; c++) {
           if (v[c] > bestVisits) {
             bestVisits = v[c];
             bestCol = c;
@@ -93,16 +110,15 @@ export function App() {
     [numSims, checkResult]
   );
 
-  // AI moves first if human is player 2
   useEffect(() => {
-    if (!loading && isLoaded() && game.currentPlayer !== humanPlayer && !result && !thinking) {
+    if (!loading && !loadError && isLoaded() && game.currentPlayer !== humanPlayer && !result && !thinking) {
       aiMove(game);
     }
-  }, [loading, game, humanPlayer, result, thinking, aiMove]);
+  }, [loading, loadError, game, humanPlayer, result, thinking, aiMove]);
 
   const handleColumnClick = useCallback(
     async (col: number) => {
-      if (thinking || result || loading) return;
+      if (thinking || result || loading || loadError) return;
       if (game.currentPlayer !== humanPlayer) return;
       if (game.board[col] !== 0) return;
 
@@ -119,16 +135,29 @@ export function App() {
 
       aiMove(next);
     },
-    [game, humanPlayer, thinking, result, loading, checkResult, aiMove]
+    [game, humanPlayer, thinking, result, loading, loadError, checkResult, aiMove]
   );
 
   const newGame = useCallback(
     (player: 1 | -1) => {
       setHumanPlayer(player);
-      setGame(new Connect4());
+      setGame(new Connect4(config));
       setResult(null);
       setVisits(null);
       setThinking(false);
+    },
+    [config]
+  );
+
+  const switchVariant = useCallback(
+    (name: string) => {
+      setPresetName(name);
+      const cfg = PRESETS[name];
+      setGame(new Connect4(cfg));
+      setResult(null);
+      setVisits(null);
+      setThinking(false);
+      setHumanPlayer(1);
     },
     []
   );
@@ -138,10 +167,24 @@ export function App() {
 
   return (
     <div className="app">
-      <h1>Connect 4</h1>
+      <h1>Connect {config.winLength}</h1>
+
+      <div className="variant-selector">
+        {PRESET_NAMES.map((name) => (
+          <button
+            key={name}
+            className={presetName === name ? "active" : ""}
+            onClick={() => switchVariant(name)}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
 
       {loading ? (
         <div className="status">Loading AI model...</div>
+      ) : loadError ? (
+        <div className="status error">{loadError}</div>
       ) : (
         <>
           <div className="status">
@@ -154,6 +197,7 @@ export function App() {
 
           <Board
             board={game.board}
+            config={config}
             winningCells={winningCells}
             lastMove={game.lastMove}
             disabled={thinking || result !== null || game.currentPlayer !== humanPlayer}
@@ -161,7 +205,7 @@ export function App() {
           />
 
           {visits && totalVisits > 0 && (
-            <div className="visits">
+            <div className="visits" style={{ gridTemplateColumns: `repeat(${config.cols}, 1fr)` }}>
               {Array.from(visits).map((v, i) => (
                 <div key={i} className="visit-bar-container">
                   <div
