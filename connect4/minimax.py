@@ -1,8 +1,26 @@
 """Minimax opponent with alpha-beta pruning for evaluation."""
 
+import ctypes
+from pathlib import Path
+
 import numpy as np
 
 from .game import Connect4
+
+# Try to load C implementation
+_c_lib = None
+_so_path = Path(__file__).parent / "minimax_c.so"
+if _so_path.exists():
+    try:
+        _c_lib = ctypes.CDLL(str(_so_path))
+        _c_lib.minimax_move.restype = ctypes.c_int
+        _c_lib.minimax_move.argtypes = [
+            ctypes.POINTER(ctypes.c_int8),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int,
+        ]
+    except OSError:
+        _c_lib = None
 
 
 def _score_position(board: np.ndarray, player: int, rows: int, cols: int, wl: int) -> int:
@@ -114,5 +132,11 @@ def minimax(
 
 def minimax_move(game: Connect4, depth: int = 5) -> int:
     """Return the best move for the current player using minimax."""
+    if _c_lib is not None:
+        board = game.board.ctypes.data_as(ctypes.POINTER(ctypes.c_int8))
+        return _c_lib.minimax_move(
+            board, game.config.rows, game.config.cols,
+            game.config.win_length, game.current_player, depth,
+        )
     col, _ = minimax(game, depth, maximizing=True)
     return col
