@@ -6,7 +6,9 @@ checkpoints/
 *.pt
 *.onnx
 *.onnx.data
+!web/public/model.onnx
 .DS_Store
 *.egg-info/
 dist/
 build/
+node_modules/

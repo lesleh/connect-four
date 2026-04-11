@@ -21,12 +21,14 @@ from .network import Connect4Net
 from .inference_server import InferenceServer, worker_play_games
 
 EVAL_GAMES = 20
-EVAL_DEPTHS = [3, 4, 5]
+EVAL_DEPTHS = [3, 4, 5, 6]
 
 # ── Hyperparameters ──────────────────────────────────────────────
 
 NUM_ITERATIONS = 150
 GAMES_PER_ITERATION = 200
+MINIMAX_GAMES_PER_ITERATION = 40  # 20% minimax opponent games
+MINIMAX_TRAIN_DEPTHS = [3, 4, 5]
 NUM_SIMULATIONS = 400
 REPLAY_BUFFER_SIZE = 150_000
 BATCH_SIZE = 256
@@ -104,6 +106,44 @@ def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, 
         else:
             bucket["losses"] += 1
     return {"p1": p1, "p2": p2}
+
+
+def play_vs_minimax(network: Connect4Net, device: torch.device, num_games: int, depths: list[int]) -> list:
+    """Play games vs minimax at random depths, return training data for the AI side."""
+    mcts = MCTS(network, num_simulations=NUM_SIMULATIONS, c_puct=C_PUCT, device=device)
+    training_data = []
+    for g in range(num_games):
+        game = Connect4()
+        depth = depths[g % len(depths)]
+        ai_player = 1 if g % 2 == 0 else -1
+        history = []
+        move_num = 0
+
+        while not game.is_terminal():
+            if game.current_player == ai_player:
+                temp = 1.0 if move_num < TEMPERATURE_THRESHOLD else 0.0
+                policy = mcts.search(game, temperature=temp)
+                history.append((game.encode(), policy, game.current_player))
+                if temp > 0:
+                    action = int(np.random.choice(COLS, p=policy))
+                else:
+                    action = int(np.argmax(policy))
+            else:
+                action = minimax_move(game, depth=depth)
+            game.play(action)
+            move_num += 1
+
+        winner = game.winner()
+        for state, policy, player in history:
+            if winner is None:
+                outcome = 0
+            elif winner == player:
+                outcome = 1
+            else:
+                outcome = -1
+            training_data.append((state, policy, outcome))
+
+    return training_data
 
 
 def save_checkpoint(network, optimizer, iteration, buffer_size, path):
@@ -246,6 +286,11 @@ def main() -> None:
         print(f"GPU server: {server.batches_processed} batches, "
               f"{server.total_inferences} inferences "
               f"(avg batch size: {server.total_inferences / max(1, server.batches_processed):.1f})")
+
+        # ── Play vs minimax (single-process, on GPU) ──────────────
+        mm_data = play_vs_minimax(network, device, MINIMAX_GAMES_PER_ITERATION, MINIMAX_TRAIN_DEPTHS)
+        replay_buffer.extend(mm_data)
+        print(f"Minimax training: {len(mm_data)} examples from {MINIMAX_GAMES_PER_ITERATION} games")
 
         # ── Training (GPU) ───────────────────────────────────────
         if len(replay_buffer) >= BATCH_SIZE:
