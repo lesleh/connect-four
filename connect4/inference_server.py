@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .game import COLS, Connect4
+from .game import Connect4, GameConfig
 from .mcts import MCTSNode
 from .network import Connect4Net
 
@@ -106,7 +106,7 @@ class InferenceServer:
         self.total_inferences += len(batch)
 
 
-# ── Remote MCTS (runs in worker processes) ───────────────────────
+# -- Remote MCTS (runs in worker processes) -------------------
 
 VIRTUAL_LOSS_BATCH = 8  # leaves to collect per round-trip
 
@@ -149,6 +149,7 @@ def remote_mcts_search(
     temperature: float = 1.0,
 ) -> np.ndarray:
     """Run MCTS using remote GPU inference with virtual loss batching."""
+    cols = game.config.cols
     root = MCTSNode(game.copy())
 
     # Expand root
@@ -203,13 +204,13 @@ def remote_mcts_search(
             leaf.backpropagate(value)
 
     # Build visit-count policy
-    visits = np.zeros(COLS, dtype=np.float32)
+    visits = np.zeros(cols, dtype=np.float32)
     for child in root.children:
         visits[child.action] = child.visit_count
 
     if temperature == 0:
         best = int(np.argmax(visits))
-        probs = np.zeros(COLS, dtype=np.float32)
+        probs = np.zeros(cols, dtype=np.float32)
         probs[best] = 1.0
         return probs
 
@@ -218,13 +219,13 @@ def remote_mcts_search(
     if total > 0:
         return visits_temp / total
     legal = game.legal_moves()
-    probs = np.zeros(COLS, dtype=np.float32)
+    probs = np.zeros(cols, dtype=np.float32)
     for c in legal:
         probs[c] = 1.0 / len(legal)
     return probs
 
 
-# ── Worker entry point ───────────────────────────────────────────
+# -- Worker entry point ----------------------------------------
 
 def worker_play_games(
     worker_id: int,
@@ -235,10 +236,14 @@ def worker_play_games(
     num_simulations: int,
     c_puct: float,
     temperature_threshold: int,
+    rows: int = 6,
+    cols: int = 7,
+    win_length: int = 4,
 ) -> None:
     """Worker process: plays games using remote GPU inference."""
+    config = GameConfig(rows=rows, cols=cols, win_length=win_length)
     for _ in range(num_games):
-        game = Connect4()
+        game = Connect4(config)
         history = []
         move_num = 0
 
@@ -255,7 +260,7 @@ def worker_play_games(
             history.append((game.encode(), policy, game.current_player))
 
             if temp > 0:
-                action = int(np.random.choice(COLS, p=policy))
+                action = int(np.random.choice(cols, p=policy))
             else:
                 action = int(np.argmax(policy))
 

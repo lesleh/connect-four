@@ -2,51 +2,52 @@
 
 import numpy as np
 
-from .game import COLS, ROWS, Connect4
+from .game import Connect4
 
 
-def _score_position(board: np.ndarray, player: int) -> int:
+def _score_position(board: np.ndarray, player: int, rows: int, cols: int, wl: int) -> int:
     """Heuristic score for non-terminal positions."""
     score = 0
     opp = -player
 
     # Prefer center column
-    center_col = board[:, 3]
+    center = cols // 2
+    center_col = board[:, center]
     score += int(np.sum(center_col == player)) * 3
 
-    # Score all windows of 4
-    for r in range(ROWS):
-        for c in range(COLS - 3):
-            window = [int(board[r, c + i]) for i in range(4)]
-            score += _score_window(window, player, opp)
-    for r in range(ROWS - 3):
-        for c in range(COLS):
-            window = [int(board[r + i, c]) for i in range(4)]
-            score += _score_window(window, player, opp)
-    for r in range(ROWS - 3):
-        for c in range(COLS - 3):
-            window = [int(board[r + i, c + i]) for i in range(4)]
-            score += _score_window(window, player, opp)
-    for r in range(ROWS - 3):
-        for c in range(3, COLS):
-            window = [int(board[r + i, c - i]) for i in range(4)]
-            score += _score_window(window, player, opp)
+    # Score all windows
+    for r in range(rows):
+        for c in range(cols - wl + 1):
+            window = [int(board[r, c + i]) for i in range(wl)]
+            score += _score_window(window, player, opp, wl)
+    for r in range(rows - wl + 1):
+        for c in range(cols):
+            window = [int(board[r + i, c]) for i in range(wl)]
+            score += _score_window(window, player, opp, wl)
+    for r in range(rows - wl + 1):
+        for c in range(cols - wl + 1):
+            window = [int(board[r + i, c + i]) for i in range(wl)]
+            score += _score_window(window, player, opp, wl)
+    for r in range(rows - wl + 1):
+        for c in range(wl - 1, cols):
+            window = [int(board[r + i, c - i]) for i in range(wl)]
+            score += _score_window(window, player, opp, wl)
 
     return score
 
 
-def _score_window(window: list[int], player: int, opp: int) -> int:
+def _score_window(window: list[int], player: int, opp: int, wl: int) -> int:
     p_count = window.count(player)
     o_count = window.count(opp)
     empty = window.count(0)
 
-    if p_count == 4:
+    if p_count == wl:
         return 100
-    if p_count == 3 and empty == 1:
+    if p_count == wl - 1 and empty == 1:
         return 5
-    if p_count == 2 and empty == 2:
+    if p_count == wl - 2 and empty == 2:
         return 2
-    if o_count == 3 and empty == 1:
+    if o_count == wl - 1 and empty == 1:
         return -4
     return 0
 
@@ -67,20 +68,19 @@ def minimax(
         winner = game.winner()
         if winner is None:
             return None, 0
-        # If there's a winner, the last player to move won.
-        # When maximizing, current_player hasn't moved yet.
         if maximizing:
-            return None, -10000 - depth  # opponent just won
+            return None, -10000 - depth
         else:
-            return None, 10000 + depth   # we just won
+            return None, 10000 + depth
 
+    cfg = game.config
     if depth == 0:
         player = game.current_player if maximizing else -game.current_player
-        return None, _score_position(game.board, player)
+        return None, _score_position(game.board, player, cfg.rows, cfg.cols, cfg.win_length)
 
     legal = game.legal_moves()
-    # Check center-ish columns first for better pruning
-    legal.sort(key=lambda c: abs(c - 3))
+    center = cfg.cols // 2
+    legal.sort(key=lambda c: abs(c - center))
 
     best_col = legal[0]
 

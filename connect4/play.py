@@ -7,28 +7,38 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .game import COLS, Connect4
+from .game import Connect4, GameConfig
 from .mcts import MCTS
 from .network import Connect4Net
 from .train import NUM_CHANNELS, NUM_RES_BLOCKS
 
 
-def load_model(checkpoint_path: str, device: torch.device) -> Connect4Net:
-    network = Connect4Net(num_res_blocks=NUM_RES_BLOCKS, channels=NUM_CHANNELS).to(device)
+def load_model(checkpoint_path: str, device: torch.device) -> tuple[Connect4Net, GameConfig]:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    rows = ckpt.get("rows", 6)
+    cols = ckpt.get("cols", 7)
+    win_length = ckpt.get("win_length", 4)
+    config = GameConfig(rows=rows, cols=cols, win_length=win_length)
+
+    network = Connect4Net(
+        rows=rows, cols=cols,
+        num_res_blocks=ckpt.get("num_res_blocks", NUM_RES_BLOCKS),
+        channels=ckpt.get("channels", NUM_CHANNELS),
+    ).to(device)
     network.load_state_dict(ckpt["model_state_dict"])
     network.eval()
-    print(f"Loaded model from iteration {ckpt['iteration']}")
-    return network
+    print(f"Loaded model from iteration {ckpt.get('iteration', '?')}")
+    print(f"Game: Connect {config.win_length} on {config.rows}x{config.cols}")
+    return network, config
 
 
-def human_vs_ai(network: Connect4Net, device: torch.device, num_simulations: int, human_first: bool) -> None:
+def human_vs_ai(network: Connect4Net, device: torch.device, num_simulations: int, human_first: bool, config: GameConfig) -> None:
     mcts = MCTS(network, num_simulations=num_simulations, device=device)
-    game = Connect4()
+    game = Connect4(config)
 
     human_player = 1 if human_first else -1
     print(f"\nYou are {'X' if human_first else 'O'}. AI is {'O' if human_first else 'X'}.")
-    print("Enter column number (0-6) to play.\n")
+    print(f"Enter column number (0-{config.cols - 1}) to play.\n")
 
     while not game.is_terminal():
         print(game)
@@ -62,14 +72,14 @@ def human_vs_ai(network: Connect4Net, device: torch.device, num_simulations: int
         print("\nAI wins!")
 
 
-def ai_vs_random(network: Connect4Net, device: torch.device, num_simulations: int, num_games: int) -> None:
+def ai_vs_random(network: Connect4Net, device: torch.device, num_simulations: int, num_games: int, config: GameConfig) -> None:
     """Evaluate the AI against a random player."""
     mcts = MCTS(network, num_simulations=num_simulations, device=device)
     wins = draws = losses = 0
 
     for g in range(num_games):
-        game = Connect4()
-        ai_player = 1 if g % 2 == 0 else -1  # alternate sides
+        game = Connect4(config)
+        ai_player = 1 if g % 2 == 0 else -1
 
         while not game.is_terminal():
             if game.current_player == ai_player:
@@ -95,9 +105,12 @@ def ai_vs_random(network: Connect4Net, device: torch.device, num_simulations: in
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Play Connect 4 against AlphaZero AI")
-    parser.add_argument("--checkpoint", "-c", default="checkpoints/latest.pt",
-                        help="Path to model checkpoint")
+    parser = argparse.ArgumentParser(description="Play Connect N against AlphaZero AI")
+    parser.add_argument("--checkpoint", "-c", default=None,
+                        help="Path to model checkpoint (auto-detected from variant)")
+    parser.add_argument("--rows", type=int, default=None)
+    parser.add_argument("--cols", type=int, default=None)
+    parser.add_argument("--win", type=int, default=None)
     parser.add_argument("--simulations", "-s", type=int, default=200,
                         help="MCTS simulations per move")
     parser.add_argument("--mode", "-m", choices=["play", "eval"], default="play",
@@ -108,21 +121,29 @@ def main() -> None:
                         help="Let AI go first (play mode only)")
     args = parser.parse_args()
 
-    if not Path(args.checkpoint).exists():
-        print(f"Checkpoint not found: {args.checkpoint}")
-        print("Run training first: python -m connect4.train")
+    if args.checkpoint:
+        ckpt_path = args.checkpoint
+    else:
+        rows = args.rows or 6
+        cols = args.cols or 7
+        win = args.win or 4
+        ckpt_path = f"checkpoints/{win}_{rows}x{cols}/latest.pt"
+
+    if not Path(ckpt_path).exists():
+        print(f"Checkpoint not found: {ckpt_path}")
+        print("Run training first: train --rows R --cols C --win W")
         sys.exit(1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.backends.mps.is_available():
         device = torch.device("mps")
 
-    network = load_model(args.checkpoint, device)
+    network, config = load_model(ckpt_path, device)
 
     if args.mode == "play":
-        human_vs_ai(network, device, args.simulations, human_first=not args.ai_first)
+        human_vs_ai(network, device, args.simulations, human_first=not args.ai_first, config=config)
     else:
-        ai_vs_random(network, device, args.simulations, args.games)
+        ai_vs_random(network, device, args.simulations, args.games, config=config)
 
 
 if __name__ == "__main__":

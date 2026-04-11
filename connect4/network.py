@@ -4,8 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .game import ROWS, COLS
-
 
 class ResBlock(nn.Module):
     def __init__(self, channels: int) -> None:
@@ -26,12 +24,15 @@ class ResBlock(nn.Module):
 class Connect4Net(nn.Module):
     """AlphaZero-style network.
 
-    Input:  (batch, 2, 6, 7) — current player's pieces + opponent's pieces
-    Output: policy logits (batch, 7), value (batch, 1) in [-1, 1]
+    Input:  (batch, 2, rows, cols) -- current player's pieces + opponent's pieces
+    Output: policy logits (batch, cols), value (batch, 1) in [-1, 1]
     """
 
-    def __init__(self, num_res_blocks: int = 5, channels: int = 128) -> None:
+    def __init__(self, rows: int = 6, cols: int = 7, num_res_blocks: int = 5, channels: int = 128) -> None:
         super().__init__()
+        self.rows = rows
+        self.cols = cols
+
         # Initial convolution
         self.conv_in = nn.Conv2d(2, channels, 3, padding=1, bias=False)
         self.bn_in = nn.BatchNorm2d(channels)
@@ -44,12 +45,12 @@ class Connect4Net(nn.Module):
         # Policy head
         self.policy_conv = nn.Conv2d(channels, 32, 1, bias=False)
         self.policy_bn = nn.BatchNorm2d(32)
-        self.policy_fc = nn.Linear(32 * ROWS * COLS, COLS)
+        self.policy_fc = nn.Linear(32 * rows * cols, cols)
 
         # Value head
         self.value_conv = nn.Conv2d(channels, 1, 1, bias=False)
         self.value_bn = nn.BatchNorm2d(1)
-        self.value_fc1 = nn.Linear(ROWS * COLS, 64)
+        self.value_fc1 = nn.Linear(rows * cols, 64)
         self.value_fc2 = nn.Linear(64, 1)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -60,7 +61,7 @@ class Connect4Net(nn.Module):
         # Policy head
         p = F.relu(self.policy_bn(self.policy_conv(x)))
         p = p.view(p.size(0), -1)
-        p = self.policy_fc(p)  # raw logits — softmax applied externally
+        p = self.policy_fc(p)  # raw logits -- softmax applied externally
 
         # Value head
         v = F.relu(self.value_bn(self.value_conv(x)))
@@ -84,7 +85,7 @@ class Connect4Net(nn.Module):
         return policy, value
 
     def predict_batch(self, encoded_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Batched inference. Returns (policies [N, 7], values [N])."""
+        """Batched inference. Returns (policies [N, cols], values [N])."""
         self.eval()
         with torch.no_grad():
             device = next(self.parameters()).device

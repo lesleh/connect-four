@@ -5,7 +5,7 @@ import math
 import numpy as np
 import torch
 
-from .game import COLS, Connect4
+from .game import Connect4
 from .network import Connect4Net
 
 
@@ -57,7 +57,7 @@ class MCTSNode:
         """Create child nodes for all legal moves, weighted by policy."""
         legal = self.game.legal_moves()
         # Mask illegal moves and renormalize
-        masked = np.zeros(COLS, dtype=np.float32)
+        masked = np.zeros(self.game.config.cols, dtype=np.float32)
         for col in legal:
             masked[col] = policy[col]
         total = masked.sum()
@@ -134,14 +134,15 @@ class MCTS:
             node.backpropagate(value)
 
         # Build visit-count distribution
-        visits = np.zeros(COLS, dtype=np.float32)
+        cols = game.config.cols
+        visits = np.zeros(cols, dtype=np.float32)
         for child in root.children:
             visits[child.action] = child.visit_count
 
         if temperature == 0:
             # Greedy
             best = np.argmax(visits)
-            probs = np.zeros(COLS, dtype=np.float32)
+            probs = np.zeros(cols, dtype=np.float32)
             probs[best] = 1.0
             return probs
 
@@ -152,7 +153,7 @@ class MCTS:
             return visits_temp / total
         # Fallback to uniform over legal moves
         legal = game.legal_moves()
-        probs = np.zeros(COLS, dtype=np.float32)
+        probs = np.zeros(cols, dtype=np.float32)
         for c in legal:
             probs[c] = 1.0 / len(legal)
         return probs
