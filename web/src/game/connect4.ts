@@ -7,6 +7,7 @@ export interface GameConfig {
 export const PRESETS: Record<string, GameConfig> = {
   "Connect 3 (3x4)": { rows: 3, cols: 4, winLength: 3 },
   "Connect 4 (6x7)": { rows: 6, cols: 7, winLength: 4 },
+  "Connect 5 (9x9)": { rows: 9, cols: 9, winLength: 5 },
 };
 
 export class Connect4 {
