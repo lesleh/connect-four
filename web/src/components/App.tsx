@@ -10,10 +10,9 @@ type GameResult = "win" | "loss" | "draw" | null;
 
 const SIM_OPTIONS = [
   { label: "Beginner", value: 0 },
-  { label: "Easy", value: 20 },
-  { label: "Medium", value: 50 },
-  { label: "Hard", value: 100 },
-  { label: "Max", value: 200 },
+  { label: "Easy", value: -1 },
+  { label: "Medium", value: 20 },
+  { label: "Hard", value: 50 },
 ];
 
 const PRESET_NAMES = Object.keys(PRESETS);
@@ -66,14 +65,14 @@ export function App() {
 
       const cols = g.config.cols;
       let bestCol: number;
-      if (numSims === 0) {
+      if (numSims <= 0) {
         const { policy } = await predict(g.encode(), g.config);
         const legal = g.legalMoves();
         const masked = new Float32Array(cols);
         for (const c of legal) masked[c] = policy[c];
         setVisits(masked);
-        // 40% chance of random move for beatable play
-        if (Math.random() < 0.4) {
+        // Beginner (0): 40% random moves. Easy (-1): raw policy, no mistakes.
+        if (numSims === 0 && Math.random() < 0.4) {
           bestCol = legal[Math.floor(Math.random() * legal.length)];
         } else {
           bestCol = legal[0];
