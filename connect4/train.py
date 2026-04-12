@@ -20,6 +20,7 @@ from .mcts import MCTS
 from .minimax import minimax_move
 from .network import Connect4Net
 from .inference_server import InferenceServer, worker_play_games
+from .solver import solver_move, is_available as solver_available
 
 EVAL_GAMES = 20
 EVAL_DEPTHS = [3, 4, 5]
@@ -108,8 +109,8 @@ def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, 
     return {"p1": p1, "p2": p2}
 
 
-def play_vs_minimax(network: Connect4Net, device: torch.device, num_games: int, depths: list[int], config: GameConfig) -> list:
-    """Play games vs minimax at random depths, return training data for the AI side."""
+def play_vs_opponent(network: Connect4Net, device: torch.device, num_games: int, config: GameConfig, opponent: str, depths: list[int]) -> list:
+    """Play games vs an opponent, return training data for the AI side."""
     mcts = MCTS(network, num_simulations=NUM_SIMULATIONS, c_puct=C_PUCT, device=device)
     training_data = []
     for g in range(num_games):
@@ -128,6 +129,8 @@ def play_vs_minimax(network: Connect4Net, device: torch.device, num_games: int, 
                     action = int(np.random.choice(config.cols, p=policy))
                 else:
                     action = int(np.argmax(policy))
+            elif opponent == "solver":
+                action, _ = solver_move(game)
             else:
                 action = minimax_move(game, depth=depth)
             game.play(action)
@@ -182,12 +185,19 @@ def main() -> None:
     parser.add_argument("--channels", type=int, default=NUM_CHANNELS, help=f"ResNet channels (default: {NUM_CHANNELS})")
     parser.add_argument("--eval-depths", type=str, default="3,4,5", help="Comma-separated eval depths (default: 3,4,5)")
     parser.add_argument("--eval-sims", type=int, default=200, help="MCTS sims for eval (default: 200)")
+    parser.add_argument("--opponent", type=str, default="minimax", choices=["minimax", "solver"],
+                        help="Opponent for training games (default: minimax)")
     args = parser.parse_args()
 
     num_res_blocks = args.blocks
     num_channels = args.channels
     eval_depths = [int(d) for d in args.eval_depths.split(",")]
     eval_sims = args.eval_sims
+    opponent = args.opponent
+    if opponent == "solver" and not solver_available():
+        print("Solver not available. Compile with: make")
+        print("Falling back to minimax.")
+        opponent = "minimax"
     config = GameConfig(rows=args.rows, cols=args.cols, win_length=args.win)
     checkpoint_dir = Path(f"checkpoints/{config.win_length}_{config.rows}x{config.cols}")
 
@@ -312,10 +322,10 @@ def main() -> None:
               f"{server.total_inferences} inferences "
               f"(avg batch size: {server.total_inferences / max(1, server.batches_processed):.1f})")
 
-        # -- Play vs minimax (single-process, on GPU) --
-        mm_data = play_vs_minimax(network, device, MINIMAX_GAMES_PER_ITERATION, MINIMAX_TRAIN_DEPTHS, config)
-        replay_buffer.extend(mm_data)
-        print(f"Minimax training: {len(mm_data)} examples from {MINIMAX_GAMES_PER_ITERATION} games")
+        # -- Play vs opponent (single-process, on GPU) --
+        opp_data = play_vs_opponent(network, device, MINIMAX_GAMES_PER_ITERATION, config, opponent, MINIMAX_TRAIN_DEPTHS)
+        replay_buffer.extend(opp_data)
+        print(f"{opponent.title()} training: {len(opp_data)} examples from {MINIMAX_GAMES_PER_ITERATION} games")
 
         # -- Training (GPU) --
         if len(replay_buffer) >= BATCH_SIZE:
