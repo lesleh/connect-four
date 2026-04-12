@@ -82,9 +82,9 @@ def train_network(
     return total_policy_loss / num_batches, total_value_loss / num_batches
 
 
-def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, config: GameConfig, num_games: int = EVAL_GAMES) -> dict:
-    """Evaluate AI (200 sims) vs minimax at given depth. Returns results split by P1/P2."""
-    mcts = MCTS(network, num_simulations=200, c_puct=C_PUCT, device=device)
+def evaluate_vs_minimax(network: Connect4Net, device: torch.device, depth: int, config: GameConfig, num_games: int = EVAL_GAMES, num_sims: int = 200) -> dict:
+    """Evaluate AI vs minimax at given depth. Returns results split by P1/P2."""
+    mcts = MCTS(network, num_simulations=num_sims, c_puct=C_PUCT, device=device)
     p1 = {"wins": 0, "draws": 0, "losses": 0}
     p2 = {"wins": 0, "draws": 0, "losses": 0}
     for g in range(num_games):
@@ -181,11 +181,13 @@ def main() -> None:
     parser.add_argument("--blocks", type=int, default=NUM_RES_BLOCKS, help=f"ResNet blocks (default: {NUM_RES_BLOCKS})")
     parser.add_argument("--channels", type=int, default=NUM_CHANNELS, help=f"ResNet channels (default: {NUM_CHANNELS})")
     parser.add_argument("--eval-depths", type=str, default="3,4,5", help="Comma-separated eval depths (default: 3,4,5)")
+    parser.add_argument("--eval-sims", type=int, default=200, help="MCTS sims for eval (default: 200)")
     args = parser.parse_args()
 
     num_res_blocks = args.blocks
     num_channels = args.channels
     eval_depths = [int(d) for d in args.eval_depths.split(",")]
+    eval_sims = args.eval_sims
     config = GameConfig(rows=args.rows, cols=args.cols, win_length=args.win)
     checkpoint_dir = Path(f"checkpoints/{config.win_length}_{config.rows}x{config.cols}")
 
@@ -325,7 +327,7 @@ def main() -> None:
         # -- Evaluate vs minimax at multiple depths --
         eval_results = {}
         for depth in eval_depths:
-            result = evaluate_vs_minimax(network, device, depth, config)
+            result = evaluate_vs_minimax(network, device, depth, config, num_sims=eval_sims)
             p1, p2 = result["p1"], result["p2"]
             total_w = p1["wins"] + p2["wins"]
             total_d = p1["draws"] + p2["draws"]
